@@ -212,17 +212,5 @@ pub fn record_passes_filters(record: &mut WarcRecord, config: &pb::ParseWarcConf
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn record_types_mask_empty_is_any() {
-        assert_eq!(record_types_mask(&[]), WarcRecordType::AnyType as u16);
-    }
-
-    #[test]
-    fn record_types_mask_ors_bits() {
-        let mask = record_types_mask(&[pb::WarcRecordType::Response as i32, pb::WarcRecordType::Request as i32]);
-        assert_eq!(mask, (WarcRecordType::Response as u16) | (WarcRecordType::Request as u16));
-    }
-}
+#[path = "convert_test.rs"]
+mod convert_test;

@@ -51,7 +51,6 @@ type ResponseSender = mpsc::Sender<Result<pb::ParseWarcResponse, Status>>;
 type EmitFn<'a> = &'a mut dyn FnMut(pb::ParseWarcResponse) -> bool;
 
 /// The `fastwarc.v1.WarcService` gRPC service (stateless).
-#[derive(Default)]
 pub struct WarcParser;
 
 #[tonic::async_trait]
