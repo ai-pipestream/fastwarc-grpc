@@ -23,7 +23,7 @@ use tonic::transport::Server;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = std::env::var("FASTWARC_GRPC_ADDR")
-        .unwrap_or_else(|_| "[::]:50051".to_owned())
+        .unwrap_or_else(|_| "[::]:50060".to_owned())
         .parse()?;
 
     let (health_reporter, health_service) = tonic_health::server::health_reporter();

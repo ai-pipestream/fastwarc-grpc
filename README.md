@@ -34,10 +34,10 @@ the serving path.
   call the service without local copies of the proto files:
 
 ```sh
-grpcurl -plaintext localhost:50051 describe fastwarc.v1.WarcService
+grpcurl -plaintext localhost:50060 describe fastwarc.v1.WarcService
 grpcurl -plaintext \
   -d "{\"config\":{}, \"archive\":\"$(base64 -w0 record.warc)\"}" \
-  localhost:50051 fastwarc.v1.WarcService/ParseArchive
+  localhost:50060 fastwarc.v1.WarcService/ParseArchive
 ```
 
 ### Python parity notes
@@ -64,7 +64,7 @@ chatnoir-resiliparse and no fork-specific patches are required.
 ## Run
 
 ```sh
-FASTWARC_GRPC_ADDR="[::]:50051" cargo run
+FASTWARC_GRPC_ADDR="[::]:50060" cargo run
 ```
 
 The server shuts down gracefully on SIGINT or SIGTERM.
