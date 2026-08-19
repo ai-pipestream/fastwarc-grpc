@@ -100,3 +100,23 @@ async fn reflection_lists_warc_service() {
         "fastwarc.v1.WarcService missing from reflection listing: {names:?}"
     );
 }
+
+#[tokio::test]
+async fn get_service_info_returns_ui_advertisement() {
+    use fastwarc_grpc::proto::fastwarc::v1::warc_service_client::WarcServiceClient;
+
+    let addr = start_full_server().await;
+    let mut client = WarcServiceClient::new(channel(addr).await);
+
+    let info = client
+        .get_service_info(fastwarc_grpc::proto::fastwarc::v1::GetServiceInfoRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(info.name, "fastwarc-grpc");
+    assert!(!info.version.is_empty());
+    let ui = info.ui.expect("ui advertisement must be set");
+    assert_eq!(ui.title, "fastwarc");
+    assert_eq!(ui.path, "/ui/fastwarc");
+    assert_eq!(ui.description, "Streaming WARC parser over gRPC");
+}

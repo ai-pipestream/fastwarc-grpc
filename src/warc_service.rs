@@ -14,7 +14,8 @@
 
 //! The `fastwarc.v1.WarcService` implementation.
 //!
-//! Both RPCs run the same blocking parse pipeline against an emit callback.
+//! The two parse RPCs run the same blocking parse pipeline against an emit
+//! callback.
 //! For `ParseWarc`, request chunks feed a private `ChannelReader` via `mpsc`
 //! and emitted messages return on a second bounded channel
 //! (`ReceiverStream`). For the unary `ParseArchive`, the request bytes are
@@ -171,6 +172,21 @@ impl pb::warc_service_server::WarcService for WarcParser {
             Err(e) if e.is_panic() => Err(Status::internal("WARC parser task panicked")),
             Err(_) => Err(Status::cancelled("WARC parser task cancelled")),
         }
+    }
+
+    async fn get_service_info(
+        &self,
+        _request: Request<pb::GetServiceInfoRequest>,
+    ) -> Result<Response<pb::GetServiceInfoResponse>, Status> {
+        Ok(Response::new(pb::GetServiceInfoResponse {
+            name: "fastwarc-grpc".to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            ui: Some(pb::UiInfo {
+                title: "fastwarc".to_owned(),
+                path: "/ui/fastwarc".to_owned(),
+                description: "Streaming WARC parser over gRPC".to_owned(),
+            }),
+        }))
     }
 }
 

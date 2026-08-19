@@ -71,6 +71,36 @@ service WarcService {
   // the records parsed up to that point intact. For larger archives or
   // incremental consumption, use ParseWarc.
   rpc ParseArchive(ParseArchiveRequest) returns (ParseArchiveResponse);
+
+  // GetServiceInfo returns the service's identity: its name, build version,
+  // and the frontend advertisement the shared ai-pipestream demo shell reads
+  // to build its tab bar.
+  rpc GetServiceInfo(GetServiceInfoRequest) returns (GetServiceInfoResponse);
+}
+
+// UiInfo is the frontend advertisement. Same shape in every ai-pipestream
+// grpc service: the demo shell reads it to build its tab bar.
+message UiInfo {
+  // title is the tab title, e.g. "fastwarc".
+  string title = 1;
+  // path is the shell mount path, e.g. "/ui/fastwarc".
+  string path = 2;
+  // description is one line, used as the tab tooltip.
+  string description = 3;
+}
+
+// GetServiceInfoRequest carries no parameters.
+message GetServiceInfoRequest {}
+
+// GetServiceInfoResponse carries the service's identity and UI
+// advertisement.
+message GetServiceInfoResponse {
+  // name is the repo name, e.g. "fastwarc-grpc".
+  string name = 1;
+  // version is the build version.
+  string version = 2;
+  // ui is the frontend advertisement for the shared demo shell.
+  UiInfo ui = 3;
 }
 
 // ParseWarcConfig configures a ParseWarc stream. It covers the parse and

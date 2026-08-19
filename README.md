@@ -27,6 +27,9 @@ the serving path.
   message size limits (4 MiB by default). Same parse pipeline, filters, and
   error model as the stream; a framing error returns the records parsed so
   far plus one non-recoverable error.
+- `fastwarc.v1.WarcService/GetServiceInfo` (unary): service name, build
+  version, and the `UiInfo` advertisement the shared ai-pipestream demo
+  shell reads to build its tab bar.
 - Filters matching Python `ArchiveIterator`: `record_types`,
   `min_content_length`, `max_content_length`, and `BuiltinFilter` predicates.
 - `grpc.health.v1.Health` for load-balancer probes.
