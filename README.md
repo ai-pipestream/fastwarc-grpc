@@ -11,6 +11,28 @@ The library itself is untouched and carries no gRPC dependencies. The server
 sits directly on the `fastwarc` Rust crate; there is no Python or Cython in
 the serving path.
 
+## Architecture
+
+`ParseWarc` is a bidirectional stream: the client uploads a `config` message
+followed by raw archive bytes, and the server streams parsed records back as
+it goes, without holding the whole archive in memory.
+
+```mermaid
+flowchart LR
+    C[Client] -- "config, then\nWARC byte chunks" --> S["WarcService::ParseWarc\n(tonic)"]
+    S -- "bytes via mpsc channel" --> P["ArchiveIterator\n(fastwarc, blocking thread)"]
+    P -- "parsed record\nor framing error" --> S
+    S -- "record_start,\npayload_chunk*,\nrecord_end / record_error" --> C
+```
+
+The archive bytes cross an `mpsc` channel into a `std::io::Read` adapter
+feeding `ArchiveIterator` on a blocking task, so the synchronous, CPU/IO-bound
+parser never blocks the async runtime. Parsed records flow back through a
+second channel as a `ReceiverStream`, so the client sees each record as soon
+as it is parsed rather than waiting for the whole archive. `ParseArchive`
+(unary) runs the identical pipeline over a single request/response pair for
+archives that fit comfortably in one gRPC message.
+
 ## Service
 
 - `fastwarc.v1.WarcService/ParseWarc` (bidirectional streaming): send one
@@ -76,6 +98,33 @@ An example client streams a local archive and prints a per-record summary:
 
 ```sh
 cargo run --example parse -- tests/data/warcfile.warc.gz
+```
+
+## Docker
+
+```bash
+docker build -t fastwarc-grpc .
+docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
+  -p 50060:50060 fastwarc-grpc
+```
+
+The build stage runs `cargo test --release` before compiling the release
+binary, so a red suite fails the image rather than shipping one. `build.rs`
+regenerates the protobuf stubs from `proto/` on every build (no checked-in
+generated code), so the build stage is `dhi.io/rust:1-dev` with
+`protobuf-compiler` installed via apt rather than the plain `dhi.io/rust:1`.
+The runtime is `dhi.io/debian-base:trixie-debian13`: no package manager, no
+shell, and it runs as a non-root user, which is why health checking is the
+orchestrator's job over `grpc.health.v1.Health/Check` rather than a
+Dockerfile `HEALTHCHECK`. `FASTWARC_GRPC_ADDR` (default `0.0.0.0:50060`)
+overrides the listen address at runtime.
+
+The published image is multi-arch (`linux/amd64` + `linux/arm64`) at
+[`docker.io/pipestreamai/fastwarc-grpc:latest`](https://hub.docker.com/r/pipestreamai/fastwarc-grpc):
+
+```bash
+docker pull pipestreamai/fastwarc-grpc:latest
+docker run --rm -p 50060:50060 pipestreamai/fastwarc-grpc:latest
 ```
 
 ## Lint and test gates
