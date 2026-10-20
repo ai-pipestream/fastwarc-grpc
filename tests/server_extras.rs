@@ -114,7 +114,7 @@ async fn get_service_info_returns_ui_advertisement() {
         .unwrap()
         .into_inner();
     assert_eq!(info.name, "fastwarc-grpc");
-    assert!(!info.version.is_empty());
+    assert_ne!(info.version.len(), 0);
     let ui = info.ui.expect("ui advertisement must be set");
     assert_eq!(ui.title, "fastwarc");
     assert_eq!(ui.path, "/ui/fastwarc");

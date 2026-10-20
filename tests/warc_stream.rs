@@ -486,7 +486,7 @@ async fn filter_record_types_response_only() {
     let responses = collect_warc("warcfile.warc", 8 << 10, &config).await;
     let outcomes = group_responses(&responses);
     let records = records_only(&outcomes);
-    assert!(!records.is_empty());
+    assert_ne!(records.len(), 0);
     assert!(
         records
             .iter()
@@ -517,7 +517,7 @@ async fn filter_content_length_bounds() {
     let responses = collect_warc("warcfile.warc", 8 << 10, &config).await;
     let outcomes = group_responses(&responses);
     let records = records_only(&outcomes);
-    assert!(!records.is_empty());
+    assert_ne!(records.len(), 0);
     for (m, _, _) in &records {
         assert!(m.content_length >= 100);
         assert!(m.content_length <= 10_000);
@@ -534,7 +534,7 @@ async fn filter_builtin_is_http() {
     let responses = collect_warc("warcfile.warc", 8 << 10, &config).await;
     let outcomes = group_responses(&responses);
     let records = records_only(&outcomes);
-    assert!(!records.is_empty());
+    assert_ne!(records.len(), 0);
     assert!(records.iter().all(|(m, _, _)| m.is_http));
 }
 
@@ -547,7 +547,7 @@ async fn stream_block_sized_records() {
     assert!(outcomes.iter().all(|o| matches!(o, RecordOutcome::Record { .. })));
     let direct_types = direct_record_types("block-sized-records.warc", &config);
     assert_eq!(outcomes.len(), direct_types.len());
-    assert!(!outcomes.is_empty());
+    assert_ne!(outcomes.len(), 0);
 }
 
 /// The unary `ParseArchive` must return exactly what a folded `ParseWarc`
@@ -615,8 +615,8 @@ async fn unary_empty_archive() {
         .await
         .unwrap()
         .into_inner();
-    assert!(response.records.is_empty());
-    assert!(response.errors.is_empty());
+    assert_eq!(response.records.len(), 0);
+    assert_eq!(response.errors.len(), 0);
 }
 
 /// A framing failure mid-archive returns the records parsed so far plus one
