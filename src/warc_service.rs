@@ -17,17 +17,25 @@
 //! The two parse RPCs run the same blocking parse pipeline against an emit
 //! callback.
 //! For `ParseWarc`, request chunks feed a private `ChannelReader` via `mpsc`
-//! and emitted messages return on a second bounded channel
-//! (`ReceiverStream`). For the unary `ParseArchive`, the request bytes are
+//! and emitted messages return on a second bounded channel, read in batches
+//! by [`Batched`]. For the unary `ParseArchive`, the request bytes are
 //! parsed from an in-memory cursor and the emitted messages are folded into
 //! a single response.
 
+use std::collections::VecDeque;
+use std::future::Future as _;
 use std::io::{self, Read, Seek, SeekFrom};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Duration;
 
 use fastwarc::stream_io::traits::IntoWarcReader;
 use fastwarc::warc::iter::{ArchiveIterator, ArchiveIteratorOptions};
 use fastwarc::warc::record::WarcRecord;
+use prost::Message as _;
 use tokio::sync::mpsc;
+use tokio::time::Sleep;
+use tokio_stream::Stream;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -56,7 +64,7 @@ pub struct WarcParser;
 
 #[tonic::async_trait]
 impl pb::warc_service_server::WarcService for WarcParser {
-    type ParseWarcStream = ReceiverStream<Result<pb::ParseWarcResponse, Status>>;
+    type ParseWarcStream = Batched;
 
     async fn parse_warc(
         &self,
@@ -142,7 +150,7 @@ impl pb::warc_service_server::WarcService for WarcParser {
             // Dropping chunk_tx signals EOF to ChannelReader.
         });
 
-        Ok(Response::new(ReceiverStream::new(resp_rx)))
+        Ok(Response::new(Batched::new(ReceiverStream::new(resp_rx))))
     }
 
     async fn parse_archive(
@@ -187,6 +195,113 @@ impl pb::warc_service_server::WarcService for WarcParser {
                 description: "Streaming WARC parser over gRPC".to_owned(),
             }),
         }))
+    }
+}
+
+/// Encoded event bytes a batch gathers before the transport gets it.
+///
+/// tonic packs the messages that are ready together into one HTTP/2 DATA
+/// frame, and h2 (0.4.18 and later) charges every DATA frame under 256 bytes
+/// against a per-connection budget that refills only as the application reads.
+/// A client that falls behind on reading would otherwise get one small frame
+/// per event and close the connection with GOAWAY `too_many_data_frames` after
+/// about a hundred of them.
+const BATCH_BYTES: usize = 256;
+
+/// The longest a small batch waits for more events, so a sparse stream still
+/// reaches the client promptly.
+const BATCH_WAIT: Duration = Duration::from_millis(2);
+
+/// The response stream: the parse's events, handed to the transport in
+/// batches.
+///
+/// Events go out once a batch holds at least `BATCH_BYTES`, after
+/// `BATCH_WAIT`, or at once when the batch holds an error, a
+/// non-recoverable `record_error` (the last message of a parse), or
+/// the channel has closed, so the transport writes a few full DATA frames
+/// rather than one per message. A batch stops taking events once it holds
+/// `BATCH_BYTES`, so it adds at most one event to what the channel already
+/// buffers, and a client that stops reading still stops the parse. Dropping
+/// it drops the receiver, which is how the parse learns the client has gone.
+pub struct Batched {
+    /// The events the parse sends.
+    events: ReceiverStream<Result<pb::ParseWarcResponse, Status>>,
+    /// Events taken from the channel and not yet handed to the transport.
+    batch: VecDeque<Result<pb::ParseWarcResponse, Status>>,
+    /// The encoded bytes of the events in `batch`.
+    batch_bytes: usize,
+    /// The channel has closed: nothing follows what is in `batch`.
+    closed: bool,
+    /// The batch is going out: every event in it is handed over before the
+    /// stream gathers again.
+    releasing: bool,
+    /// Runs while a small batch waits for more events.
+    wait: Option<Pin<Box<Sleep>>>,
+}
+
+impl Batched {
+    /// Batch the events arriving on `events`.
+    fn new(events: ReceiverStream<Result<pb::ParseWarcResponse, Status>>) -> Self {
+        Self {
+            events,
+            batch: VecDeque::new(),
+            batch_bytes: 0,
+            closed: false,
+            releasing: false,
+            wait: None,
+        }
+    }
+}
+
+impl Stream for Batched {
+    type Item = Result<pb::ParseWarcResponse, Status>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = &mut *self;
+        if !this.releasing {
+            let mut flush = false;
+            while !this.closed && !flush && this.batch_bytes < BATCH_BYTES {
+                match Pin::new(&mut this.events).poll_next(cx) {
+                    Poll::Pending => break,
+                    Poll::Ready(Some(item)) => {
+                        flush = match &item {
+                            Err(_) => true,
+                            Ok(response) => {
+                                this.batch_bytes += response.encoded_len();
+                                matches!(
+                                    &response.kind,
+                                    Some(pb::parse_warc_response::Kind::RecordError(pb::RecordError {
+                                        recoverable: false,
+                                        ..
+                                    }))
+                                )
+                            }
+                        };
+                        this.batch.push_back(item);
+                    }
+                    Poll::Ready(None) => this.closed = true,
+                }
+            }
+            if this.batch.is_empty() {
+                return if this.closed { Poll::Ready(None) } else { Poll::Pending };
+            }
+            if !flush && !this.closed && this.batch_bytes < BATCH_BYTES {
+                let wait = this
+                    .wait
+                    .get_or_insert_with(|| Box::pin(tokio::time::sleep(BATCH_WAIT)));
+                if wait.as_mut().poll(cx).is_pending() {
+                    return Poll::Pending;
+                }
+            }
+            this.releasing = true;
+            this.wait = None;
+        }
+        let item = this.batch.pop_front();
+        if this.batch.is_empty() {
+            this.releasing = false;
+            this.batch_bytes = 0;
+        }
+        Poll::Ready(item)
     }
 }
 
