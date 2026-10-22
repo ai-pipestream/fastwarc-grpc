@@ -675,3 +675,52 @@ async fn client_cancel_mid_stream() {
     assert_eq!(outcomes.len(), 50);
     assert!(outcomes.iter().all(|o| matches!(o, RecordOutcome::Record { .. })));
 }
+
+/// Many small records reach a client that sends the whole archive before it
+/// reads any response.
+///
+/// Each record here is a few dozen bytes of WARC and sent in a chunk of its
+/// own, so the parser has a `record_start`, a `payload_chunk` and a
+/// `record_end` of well under 256 bytes for each request message. h2 charges
+/// every DATA frame under 256 bytes against a per-connection budget that
+/// refills only as the application reads, and closes the connection with
+/// GOAWAY `too_many_data_frames` when it runs out, so a server that wrote one
+/// frame per message would cut this client off partway. Every record has to
+/// arrive, in order, with its payload.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn many_small_records_reach_a_client_that_uploads_before_it_reads() {
+    const RECORDS: usize = 2000;
+    let records: Vec<Vec<u8>> = (0..RECORDS)
+        .map(|n| format!("WARC/1.0\r\nWARC-Type: resource\r\nContent-Length: 1\r\n\r\n{}\r\n\r\n", n % 10).into_bytes())
+        .collect();
+    let mut requests = vec![pb::ParseWarcRequest {
+        kind: Some(pb::parse_warc_request::Kind::Config(default_config())),
+    }];
+    requests.extend(records.iter().map(|record| pb::ParseWarcRequest {
+        kind: Some(pb::parse_warc_request::Kind::Chunk(record.clone())),
+    }));
+
+    let mut client = common::warc_client().await;
+    let mut stream = client
+        .parse_warc(tokio_stream::iter(requests))
+        .await
+        .unwrap()
+        .into_inner();
+    // The client is busy elsewhere while its upload goes out and the server
+    // answers it.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let mut responses = Vec::new();
+    while let Some(resp) = stream.message().await.expect("stream is healthy") {
+        responses.push(resp);
+    }
+    let outcomes = group_responses(&responses);
+    let records = records_only(&outcomes);
+    assert_eq!(outcomes.len(), RECORDS, "no record errors");
+    assert_eq!(records.len(), RECORDS);
+    for (n, (metadata, payload, _)) in records.iter().enumerate() {
+        assert_eq!(metadata.record_index, u64::try_from(n).unwrap());
+        assert_eq!(metadata.record_type, pb::WarcRecordType::Resource as i32);
+        assert_eq!(*payload, format!("{}", n % 10).as_bytes());
+    }
+}
