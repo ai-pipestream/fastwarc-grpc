@@ -30,42 +30,43 @@ jobs:
       - name: buf format
         working-directory: proto
         run: buf format --diff --exit-code
-      # Contract evolution is guarded against main once history exists there.
-      - name: buf breaking
-        if: github.event_name == 'pull_request'
-        working-directory: proto
-        run: |
-          git fetch origin main --depth 1
-          buf breaking --against "../.git#ref=origin/main,subdir=proto"
+      # The contract is owned upstream; breaking-change review happens there.
+      # What this repo guarantees is that its copy is the pinned crate's.
+      - name: proto matches the pinned crate
+        run: scripts/check-proto-pin.sh
 
-  rust:
+  image:
     runs-on: ubuntu-latest
-    # Docker Hardened Images Rust toolchain, the image the Dockerfile builds
-    # from. dhi.io signs in with the Docker Hub org credentials.
-    container:
-      image: dhi.io/rust:1-dev
-      credentials:
-        username: ${{ secrets.DOCKER_USER }}
-        password: ${{ secrets.DOCKER_TOKEN }}
     steps:
-      # The hardened image ships the Rust toolchain (rustfmt and clippy
-      # included) and a C linker only. The build needs protoc, the actions
-      # need git and node.
-      - name: Install job tooling
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl git nodejs protobuf-compiler libprotobuf-dev
-          # The workspace mount belongs to the runner user, not root.
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
-      - name: rustfmt
-        run: cargo fmt --check
-      - name: clippy (pedantic)
-        run: cargo clippy --all-targets --no-deps -- -D warnings -D clippy::pedantic
-      - name: tests
-        run: cargo test
-      - name: rustdoc
-        run: cargo doc --no-deps
+      - name: Log in to Docker Hardened Images (dhi.io)
+        uses: docker/login-action@v3
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+      - name: Install grpcurl
         env:
-          RUSTDOCFLAGS: -D warnings
+          GRPCURL_VERSION: 1.9.3
+        run: |
+          base="https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VERSION}"
+          archive="grpcurl_${GRPCURL_VERSION}_linux_x86_64.tar.gz"
+          cd "$RUNNER_TEMP"
+          curl -sSfLO "$base/$archive"
+          curl -sSfL "$base/grpcurl_${GRPCURL_VERSION}_checksums.txt" | grep " $archive\$" | sha256sum -c -
+          tar -xzf "$archive" grpcurl
+          install -m 0755 grpcurl /usr/local/bin/grpcurl
+      - name: Build the image
+        run: docker build -t fastwarc-grpc:ci .
+      - name: Smoke test
+        run: |
+          docker run -d --name fastwarc --read-only --cap-drop ALL \
+            --security-opt no-new-privileges -p 50060:50060 fastwarc-grpc:ci
+          for _ in $(seq 1 30); do
+            grpcurl -plaintext localhost:50060 list >/dev/null 2>&1 && break
+            sleep 1
+          done
+          scripts/smoke.sh localhost:50060
+      - name: Server log
+        if: always()
+        run: docker logs fastwarc || true
