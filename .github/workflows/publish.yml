@@ -9,8 +9,8 @@ name: Publish Images
 #
 # Multi-arch (amd64 + arm64): the runtime base (dhi.io/debian-base) is
 # published for both platforms, and the Rust build runs under QEMU for the
-# arm64 leg. The Dockerfile runs `cargo test --release --locked` in-build,
-# so tests gate the push implicitly.
+# arm64 leg. The image packages the fastwarc-grpc crate at the version the
+# Dockerfile pins; the ci workflow smoke-tests it before main moves.
 on:
   push:
     branches: [main]
