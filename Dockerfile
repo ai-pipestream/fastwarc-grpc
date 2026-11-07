@@ -4,18 +4,16 @@
 # ---------------------------------------------------------------------------
 # Build stage.
 #
-# The tests run here, against the release profile the image ships, before the
-# binary is built, so a red suite fails the image rather than shipping. That
-# is the whole reason this is a multi-stage build and not a `COPY` of
-# something built on a laptop: the artifact and the evidence for it come out
-# of the same command.
+# The server is the official `fastwarc-grpc` crate from crates.io, published
+# out of chatnoir-resiliparse. This repo only packages it: the version below
+# is the whole pin, and `proto/` holds a byte-identical copy of the contract
+# that ships inside that crate (scripts/check-proto-pin.sh keeps the two in
+# step). `--locked` builds against the Cargo.lock the crate was published
+# with, so the image resolves the same dependency tree upstream tested.
 #
-# protoc IS needed here (unlike grpc-lol-html/grpc-epub/grpc-pdf-inspector):
-# build.rs drives tonic-prost-build over proto/ on every build, and this crate
-# has no committed generated stubs (see src/lib.rs's `include_proto!`). So the
-# dev variant of the hardened toolchain image is used: it carries apt (needed
-# for protoc) and runs as root, where the plain dhi.io/rust:1 runtime-style
-# image has no package manager at all.
+# protoc is needed: the crate's build.rs drives tonic-prost-build over its
+# protos. So the dev variant of the hardened toolchain image is used, which
+# carries apt and runs as root.
 # ---------------------------------------------------------------------------
 FROM dhi.io/rust:1-dev AS builder
 
@@ -23,35 +21,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       protobuf-compiler libprotobuf-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /src
-COPY . .
-
-# `--locked` makes the build reproducible and fails loudly if Cargo.lock is out
-# of date, rather than quietly resolving to something never tested.
-RUN cargo test --release --locked
-RUN cargo build --release --locked --bin fastwarc-grpc \
-    && strip target/release/fastwarc-grpc
+ARG FASTWARC_GRPC_VERSION=1.1.0
+RUN cargo install --locked --root /out fastwarc-grpc --version "=${FASTWARC_GRPC_VERSION}" \
+    && strip /out/bin/fastwarc-grpc
 
 # ---------------------------------------------------------------------------
 # Runtime stage.
 #
 # Docker Hardened Images debian-base: glibc and libgcc, no package manager,
-# pulls from the docker.io ecosystem (dhi.io) with signed provenance, and
-# runs as uid 65532 out of the box. There is no hot path that needs a shell,
-# and this service never writes to disk, so the container can and should run
-# with `--read-only`.
+# runs as uid 65532 out of the box. The server never writes to disk (local
+# file access stays off unless FASTWARC_GRPC_ALLOW_LOCAL_FILES is set), so
+# the container can and should run with `--read-only`.
 #
 #   docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
 #     -p 50060:50060 fastwarc-grpc
 #
-# Health checking is the orchestrator's job over
-# gRPC (`grpc.health.v1.Health/Check`, which this server registers) rather than
-# a Dockerfile HEALTHCHECK, because there is no shell here to run one with.
+# Health checking is the orchestrator's job over gRPC
+# (`grpc.health.v1.Health/Check`, which the server registers) rather than a
+# Dockerfile HEALTHCHECK, because there is no shell here to run one with.
 # ---------------------------------------------------------------------------
 FROM dhi.io/debian-base:trixie-debian13
 
-COPY --from=builder /src/target/release/fastwarc-grpc /usr/local/bin/fastwarc-grpc
+COPY --from=builder /out/bin/fastwarc-grpc /usr/local/bin/fastwarc-grpc
 
+# The crate listens on 50061 by default; the fleet has always reached this
+# service on 50060, so the image keeps that.
 ENV FASTWARC_GRPC_ADDR=0.0.0.0:50060
 EXPOSE 50060
 USER nonroot
