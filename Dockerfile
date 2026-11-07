@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       protobuf-compiler libprotobuf-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-ARG FASTWARC_GRPC_VERSION=1.1.0
+ARG FASTWARC_GRPC_VERSION=2.0.1
 RUN cargo install --locked --root /out fastwarc-grpc --version "=${FASTWARC_GRPC_VERSION}" \
     && strip /out/bin/fastwarc-grpc
 
