@@ -11,7 +11,7 @@ changes go upstream.
 
 | What | Where |
 |---|---|
-| Pinned crate version | `ARG FASTWARC_GRPC_VERSION` in [`Dockerfile`](Dockerfile) (currently 1.1.0) |
+| Pinned crate version | `ARG FASTWARC_GRPC_VERSION` in [`Dockerfile`](Dockerfile) (currently 2.0.1) |
 | Contract | [`proto/fastwarc/v1/`](proto/fastwarc/v1), byte-identical to the pinned crate's `proto/` |
 | Test archives | [`tests/data/`](tests/data), copies from the chatnoir-resiliparse test corpus plus a zstd re-compression of `warcfile.warc` |
 
